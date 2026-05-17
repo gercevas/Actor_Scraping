@@ -233,15 +233,14 @@ async def health():
     "/image",
     summary="Imagen de portada de un libro por ISBN",
 )
-async def image_single(isbn: str = Query(..., min_length=10, max_length=13)):
-    """
-    Devuelve la URL de la imagen de portada de un libro.
-    Si ya fue descargada antes, la sirve desde caché.
-
-    Ejemplo: GET /image?isbn=9781382008396
-    Respuesta: { "isbn": "...", "image_url": "/static/images/9781382008396.jpg", "cached": false }
-    """
-    return await fetch_image(isbn)
+async def image_single(
+    isbn: str = Query(..., min_length=10, max_length=13),
+    row_number: Optional[int] = Query(default=None),
+):
+    result = await fetch_image(isbn)
+    if row_number is not None:
+        result["row_number"] = row_number
+    return result
 
 
 @app.post(
