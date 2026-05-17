@@ -169,16 +169,16 @@ async def fetch_image(isbn: str) -> Dict[str, Any]:
             return {"isbn": isbn, "image_url": None, "cached": False, "error": f"Browser error: {e}"}
 
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+            await accept_cookies(page)
 
             try:
                 await page.wait_for_selector(
-                    'img[data-test="result-picture-image"]', timeout=20000
+                    'img[data-test="result-picture-image"]', timeout=10000
                 )
             except PlaywrightTimeoutError:
-                await page.wait_for_timeout(3000)
-
-            await accept_cookies(page)
+                pass
 
             # Sin resultados
             for txt in ["No se han encontrado resultados", "No se encontraron resultados"]:
@@ -201,7 +201,7 @@ async def fetch_image(isbn: str) -> Dict[str, Any]:
                 return {"isbn": isbn, "image_url": None, "cached": False, "error": "Imagen no encontrada en el DOM"}
 
             # Descargar
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
                 r = await client.get(img_src, headers={"Referer": "https://www.casadellibro.com/"})
                 if r.status_code == 200:
                     dest.write_bytes(r.content)
