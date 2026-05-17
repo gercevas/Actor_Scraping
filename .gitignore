@@ -42,3 +42,5 @@ package.json
 # ===== Env vars =====
 .env
 .env.*
+
+*.json
