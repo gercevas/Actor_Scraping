@@ -11,7 +11,8 @@ _pw = None
 _browser = None
 _context = None
 _browser_ready = asyncio.Event()
-sem = asyncio.Semaphore(1)
+BATCH_CONCURRENCY = 3
+sem = asyncio.Semaphore(BATCH_CONCURRENCY)
 
 # Script de stealth para inyectar en cada página — evita detección de bots
 STEALTH_SCRIPT = """
@@ -36,7 +37,7 @@ def clean_isbn(isbn: str) -> str:
 
 
 class BatchRequest(BaseModel):
-    isbns: List[str] = Field(..., min_length=1, max_length=50)
+    isbns: List[str] = Field(..., min_length=1, max_length=100)
     pause_ms: int = Field(default=1000, ge=0, le=10000)
 
 
@@ -339,12 +340,7 @@ async def casadellibro_batch(req: BatchRequest):
     if not isbns:
         return {"source": "casadellibro", "count": 0, "success_count": 0, "error_count": 0, "results": []}
 
-    results = []
-    for i, isbn in enumerate(isbns):
-        result = await scrape_casadellibro_isbn(isbn)
-        results.append(result)
-        if i < len(isbns) - 1 and req.pause_ms > 0:
-            await asyncio.sleep(req.pause_ms / 1000)
+    results = await asyncio.gather(*[scrape_casadellibro_isbn(isbn) for isbn in isbns])
 
     success_count = sum(1 for r in results if not r.get("error"))
     error_count = len(results) - success_count
@@ -354,7 +350,7 @@ async def casadellibro_batch(req: BatchRequest):
         "count": len(results),
         "success_count": success_count,
         "error_count": error_count,
-        "results": results,
+        "results": list(results),
     }
 
 
@@ -378,7 +374,6 @@ async def debug(isbn: str = Query(..., min_length=10, max_length=13)):
             text = await page.locator("body").inner_text(timeout=5000)
             current_url = page.url
 
-            # Busca selectores clave
             price_count = await page.locator("span.x-currency").count()
             article_count = await page.locator("article").count()
             result_item_count = await page.locator('[data-test="search-result-item"]').count()
