@@ -27,7 +27,7 @@ def clean_isbn(isbn: str) -> str:
 
 
 class BatchRequest(BaseModel):
-    isbns: List[str] = Field(..., min_length=1, max_length=50)
+    isbns: List[str] = Field(..., min_length=1, max_length=100)
     pause_ms: int = Field(default=2000, ge=0, le=10000)
 
 
@@ -312,31 +312,32 @@ async def casadellibro(isbn: str = Query(..., min_length=10, max_length=13)):
         await page.close()
 
 
+BATCH_CONCURRENCY = 3
+
+
 @app.post("/casadellibro/batch")
 async def casadellibro_batch(req: BatchRequest):
     ctx = await get_context()
-    page = await ctx.new_page()
+    isbns = [clean_isbn(x) for x in req.isbns if clean_isbn(x)]
+    concurrency_sem = asyncio.Semaphore(BATCH_CONCURRENCY)
 
-    results = []
-    try:
-        isbns = [clean_isbn(x) for x in req.isbns if clean_isbn(x)]
+    async def scrape_one(isbn: str) -> Dict[str, Any]:
+        async with concurrency_sem:
+            page = await ctx.new_page()
+            try:
+                return await scrape_casadellibro_isbn(page, isbn)
+            finally:
+                await page.close()
 
-        for i, isbn in enumerate(isbns):
-            result = await scrape_casadellibro_isbn(page, isbn)
-            results.append(result)
+    results = await asyncio.gather(*[scrape_one(isbn) for isbn in isbns])
 
-            if i < len(isbns) - 1 and req.pause_ms > 0:
-                await asyncio.sleep(req.pause_ms / 1000)
+    success_count = sum(1 for r in results if not r.get("error"))
+    error_count = len(results) - success_count
 
-        success_count = sum(1 for r in results if not r.get("error"))
-        error_count = len(results) - success_count
-
-        return {
-            "source": "casadellibro",
-            "count": len(results),
-            "success_count": success_count,
-            "error_count": error_count,
-            "results": results,
-        }
-    finally:
-        await page.close()
+    return {
+        "source": "casadellibro",
+        "count": len(results),
+        "success_count": success_count,
+        "error_count": error_count,
+        "results": list(results),
+    }
