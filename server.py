@@ -11,10 +11,10 @@ _pw = None
 _browser = None
 _context = None
 _browser_ready = asyncio.Event()
+
 BATCH_CONCURRENCY = 3
 sem = asyncio.Semaphore(BATCH_CONCURRENCY)
 
-# Script de stealth para inyectar en cada página — evita detección de bots
 STEALTH_SCRIPT = """
 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
 Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
@@ -42,7 +42,6 @@ class BatchRequest(BaseModel):
 
 
 async def _create_stealth_context():
-    """Crea un contexto con anti-detección configurado."""
     global _browser
     ctx = await _browser.new_context(
         locale="es-ES",
@@ -52,17 +51,13 @@ async def _create_stealth_context():
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/124.0.0.0 Safari/537.36"
         ),
-        extra_http_headers={
-            "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-        },
+        extra_http_headers={"Accept-Language": "es-ES,es;q=0.9,en;q=0.8"},
     )
-    # Inyecta el script stealth ANTES de que cargue cualquier página
     await ctx.add_init_script(STEALTH_SCRIPT)
     return ctx
 
 
 async def _launch_browser():
-    """Arranca Playwright en background sin bloquear el healthcheck."""
     global _pw, _browser, _context
     try:
         _pw = await async_playwright().start()
@@ -107,16 +102,12 @@ async def health():
 
 
 async def get_context():
-    """Espera a que el browser esté listo y devuelve el contexto."""
     global _pw, _browser, _context
-
     await asyncio.wait_for(_browser_ready.wait(), timeout=30)
-
     if _browser is None or not _browser.is_connected():
         _browser_ready.clear()
         await _launch_browser()
         await asyncio.wait_for(_browser_ready.wait(), timeout=30)
-
     if _context is None:
         _context = await _create_stealth_context()
     return _context
@@ -187,33 +178,25 @@ async def scrape_casadellibro_isbn(isbn: str) -> Dict[str, Any]:
             }
 
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-            # Espera a que aparezcan resultados con timeout razonable
+            await accept_cookies(page)
+
             try:
                 await page.wait_for_selector(
                     'span.x-currency, [data-test="search-result-item"], '
                     '[data-testid="search-result-item"], article',
-                    timeout=20000,
+                    timeout=15000,
                 )
             except PlaywrightTimeoutError:
-                await page.wait_for_timeout(3000)
+                await page.wait_for_timeout(2000)
 
-            await accept_cookies(page)
-
-            # Detectar "No se han encontrado resultados" con locator directo
             no_results = False
-            try:
-                loc = page.get_by_text("No se han encontrado resultados")
-                if await loc.count() > 0:
-                    no_results = True
-            except Exception:
-                pass
-            if not no_results:
+            for txt in ["No se han encontrado resultados", "No se encontraron resultados"]:
                 try:
-                    loc = page.get_by_text("No se encontraron resultados")
-                    if await loc.count() > 0:
+                    if await page.get_by_text(txt).count() > 0:
                         no_results = True
+                        break
                 except Exception:
                     pass
 
@@ -330,8 +313,14 @@ async def scrape_casadellibro_isbn(isbn: str) -> Dict[str, Any]:
 
 
 @app.get("/casadellibro")
-async def casadellibro(isbn: str = Query(..., min_length=10, max_length=13)):
-    return await scrape_casadellibro_isbn(isbn)
+async def casadellibro(
+    isbn: str = Query(..., min_length=10, max_length=13),
+    row_number: Optional[int] = Query(default=None),
+):
+    result = await scrape_casadellibro_isbn(isbn)
+    if row_number is not None:
+        result["row_number"] = row_number
+    return result
 
 
 @app.post("/casadellibro/batch")
@@ -356,7 +345,6 @@ async def casadellibro_batch(req: BatchRequest):
 
 @app.get("/debug")
 async def debug(isbn: str = Query(..., min_length=10, max_length=13)):
-    """Endpoint de diagnóstico — devuelve el HTML crudo que ve el browser."""
     async with sem:
         try:
             ctx = await get_context()
@@ -366,8 +354,8 @@ async def debug(isbn: str = Query(..., min_length=10, max_length=13)):
 
         try:
             url = f"https://www.casadellibro.com/libros?query={isbn}"
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(5000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
             await accept_cookies(page)
 
             html = await page.content()
