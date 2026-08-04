@@ -124,6 +124,11 @@ async def scrape_casadellibro_isbn(isbn: str) -> Dict[str, Any]:
         item = next((c for c in content if c.get("ean") == isbn), content[0])
         price = item.get("price") or {}
 
+        price_current_eur = format_price(price.get("current"))
+        price_previous_eur = format_price(price.get("previous"))
+        if price_current_eur is not None and price_current_eur == price_previous_eur:
+            price_current_eur = None
+
         return {
             "isbn": isbn,
             "title": item.get("name"),
@@ -131,8 +136,8 @@ async def scrape_casadellibro_isbn(isbn: str) -> Dict[str, Any]:
             "encuadernacion": item.get("encuadernation"),
             "anio_edicion": item.get("yearPublication"),
             "fecha_lanzamiento": format_date(item.get("dateRelease")),
-            "price_current_eur": format_price(price.get("current")),
-            "price_previous_eur": format_price(price.get("previous")),
+            "price_current_eur": price_current_eur,
+            "price_previous_eur": price_previous_eur,
             "url": item.get("url") or request_url,
             "error": None,
         }
